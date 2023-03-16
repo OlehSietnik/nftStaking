@@ -2,13 +2,14 @@ import type { SnapshotRestorer } from "@nomicfoundation/hardhat-network-helpers"
 import { takeSnapshot } from "@nomicfoundation/hardhat-network-helpers";
 
 import { expect } from "chai";
-import { ethers, upgrades } from "hardhat";
+import { ethers, upgrades, network } from "hardhat";
 import type { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 
 import type { NFTStakingContract, ERC721Mock } from "../typechain-types";
 
 describe("NFTStakingContract", function () {
     const NUM_NFTS = 2;
+    const STAKING_PERIOD = 30 * 24 * 3600;
     let snapshotA: SnapshotRestorer;
 
     // Signers.
@@ -43,20 +44,13 @@ describe("NFTStakingContract", function () {
     });
 
     describe("# Staking", function () {
-        it("Cannot stake token not being its owner", async () => {
-            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
-            const TokenID = 34567;
-            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
-            nfts.map((x) => { return x.address })]);
-            nfts[0].mint(user.address, TokenID);
-            await expect(nftStakingContract.stake(TokenID, 0)).to.be.revertedWith("You're not an owner of this token!");
-        });
         it("Cannot stake already staked tokens", async () => {
             const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
             const TokenID = 34567;
             let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
             nfts.map((x) => { return x.address })]);
             nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
             await nftStakingContract.connect(user).stake(TokenID, 0);
             await expect(nftStakingContract.connect(user).stake(TokenID, 0))
             .to.be.revertedWith("This token is/was already staked!");
@@ -69,11 +63,144 @@ describe("NFTStakingContract", function () {
             nfts.map((x) => { return x.address })]);
             for(let i = 0; i < MAX_USER_STAKED_NFTS; i++) {
                 nfts[i % NUM_NFTS].mint(user.address, TokenID + i);
+                nfts[i % NUM_NFTS].connect(user).approve(nftStakingContract.address, TokenID + i);
                 await nftStakingContract.connect(user).stake(TokenID + i, i % NUM_NFTS);
             }
             nfts[0].mint(user.address, TokenID + MAX_USER_STAKED_NFTS);
             await expect(nftStakingContract.connect(user).stake(TokenID + MAX_USER_STAKED_NFTS, 0))
             .to.be.revertedWith("You cannot stake more tokens!");
+        });
+        it("Should stake tokens", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let now = Math.floor(Date.now() / 1000) + 5;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await network.provider.send("evm_setNextBlockTimestamp", [now - 3]);
+            await network.provider.send("evm_mine");
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            expect(await nfts[0].ownerOf(TokenID)).to.be.equal(nftStakingContract.address);
+            expect(await nftStakingContract.ownerOf(0)).to.be.equal(user.address);
+            expect(await nftStakingContract.stakedNFTs(0, TokenID)).to.be.true;
+            expect((await nftStakingContract.stakedNFTsInfo(0, TokenID)).mintedTokenId).to.be.equal(0);
+            expect((await nftStakingContract.stakedNFTsInfo(0, TokenID)).endTime).to.be.equal(now + STAKING_PERIOD);
+            expect((await nftStakingContract.stakedNFTsInfo(0, TokenID)).stakerAddress).to.be.equal(user.address);
+            expect(await nftStakingContract.userStakedNFTs(user.address, 0, 0)).to.be.equal(TokenID);
+            expect(await nftStakingContract.userStakedNFTsCount(user.address)).to.be.equal(1);
+        });
+    });
+    describe("# Unstaking", function () {
+        it("Cannot unstake tokens that are not staked yet", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            await expect(nftStakingContract.connect(user).unstake(TokenID, 0))
+            .to.be.revertedWith("This token isn't staked!");
+        });
+        it("Only staker can unstake tokens", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await expect(nftStakingContract.connect(deployer).unstake(TokenID, 0))
+            .to.be.revertedWith("Only staker can unstake tokens!");
+        });
+        it("Cannot unstake token after staking endtime", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let now = Math.floor(Date.now() / 1000);
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await network.provider.send("evm_setNextBlockTimestamp", [now + STAKING_PERIOD + 3600]);
+            await network.provider.send("evm_mine");
+            await expect(nftStakingContract.connect(user).unstake(TokenID, 0))
+            .to.be.revertedWith("You cannot unstake token after staking endtime!");
+        });
+        it("Should unstake tokens", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await nftStakingContract.connect(user).unstake(TokenID, 0);
+            expect(await nfts[0].ownerOf(TokenID)).to.be.equal(user.address);
+            expect(await nftStakingContract.ownerOf(0)).to.be.equal(nftStakingContract.address);
+            expect(await nftStakingContract.stakedNFTs(0, TokenID)).to.be.false;
+            expect(await nftStakingContract.userStakedNFTsCount(user.address)).to.be.equal(0);
+        });
+    });
+    describe("# Claiming new NFTs", function () {
+        it("Cannot claim NFTs from tokens that are not staked yet", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            await expect(nftStakingContract.connect(user).claimNewNFT(TokenID, 0))
+            .to.be.revertedWith("This token isn't staked!");
+        });
+        it("Only staker can claim new NFTs", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await expect(nftStakingContract.connect(deployer).claimNewNFT(TokenID, 0))
+            .to.be.revertedWith("Only staker can claim new tokens!");
+        });
+        it("Cannot claim new NFTs before staking endtime", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await expect(nftStakingContract.connect(user).claimNewNFT(TokenID, 0))
+            .to.be.revertedWith("Token staking period not passed!");
+        });
+        it("Cannot claim from one token more than once", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let now = Math.floor(Date.now() / 1000);
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await network.provider.send("evm_setNextBlockTimestamp", [now + STAKING_PERIOD + 3600]);
+            await network.provider.send("evm_mine");
+            await nftStakingContract.connect(user).claimNewNFT(TokenID, 0);
+            await expect(nftStakingContract.connect(user).claimNewNFT(TokenID, 0))
+            .to.be.revertedWith("You already claimed an NFT from this token!");
+        });
+        it("Cannot claim from one token more than once", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+            const TokenID = 34567;
+            let now = Math.floor(Date.now() / 1000);
+            let nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+            nfts.map((x) => { return x.address })]);
+            nfts[0].mint(user.address, TokenID);
+            nfts[0].connect(user).approve(nftStakingContract.address, TokenID);
+            await nftStakingContract.connect(user).stake(TokenID, 0);
+            await network.provider.send("evm_setNextBlockTimestamp", [now + STAKING_PERIOD + 3600]);
+            await network.provider.send("evm_mine");
+            await nftStakingContract.connect(user).claimNewNFT(TokenID, 0);
+            expect(await nfts[0].ownerOf(TokenID)).to.be.equal(user.address);
+            expect(await nftStakingContract.ownerOf(1)).to.be.equal(user.address);
+            expect((await nftStakingContract.stakedNFTsInfo(0, TokenID)).claimed).to.be.true;
         });
     });
 });

@@ -17,16 +17,17 @@ contract NFTStakingContract is ERC721Upgradeable {
     }
 
     uint256 public constant MAX_USER_STAKED_NFTS = 10;
+    uint256 public constant STAKING_PERIOD = 30 * 24 * 3600;
 
     // _______________ Storage _______________
 
-    Counters.Counter private lastNftId;
-    IERC721[] private nftCollections;
+    Counters.Counter public lastNftId;
+    IERC721[] public nftCollections;
     // collectionId => tokenId => info
-    mapping(uint256 => mapping(uint256 => StakedNFTInfo)) private stakedNFTsInfo;
-    mapping(uint256 => mapping(uint256 => bool)) private stakedNFTs;
-    mapping(address => mapping(uint256 => uint256[])) private userStakedNFTs;
-    mapping(address => uint256) private userStakedNFTsCount;
+    mapping(uint256 => mapping(uint256 => StakedNFTInfo)) public stakedNFTsInfo;
+    mapping(uint256 => mapping(uint256 => bool)) public stakedNFTs;
+    mapping(address => mapping(uint256 => uint256[])) public userStakedNFTs;
+    mapping(address => uint256) public userStakedNFTsCount;
 
     // _______________ Errors _______________
 
@@ -47,25 +48,27 @@ contract NFTStakingContract is ERC721Upgradeable {
     // _______________ External functions _______________
 
     function stake(uint256 tokenId, uint256 collectionId) external {
-        require(nftCollections[collectionId].ownerOf(tokenId) == _msgSender(), "You're not an owner of this token!");
         require(!stakedNFTs[collectionId][tokenId], "This token is/was already staked!");
         require(userStakedNFTsCount[_msgSender()] < MAX_USER_STAKED_NFTS, "You cannot stake more tokens!");
 
+        nftCollections[collectionId].transferFrom(_msgSender(), address(this), tokenId);
         uint256 mintedId = mint(_msgSender());
         stakedNFTs[collectionId][tokenId] = true;
         stakedNFTsInfo[collectionId][tokenId].mintedTokenId = mintedId;
-        stakedNFTsInfo[collectionId][tokenId].endTime = block.timestamp + 30 * 24 * 3600;
+        stakedNFTsInfo[collectionId][tokenId].endTime = block.timestamp + STAKING_PERIOD;
         stakedNFTsInfo[collectionId][tokenId].stakerAddress = _msgSender();
-        userStakedNFTs[_msgSender()][collectionId].push(mintedId);
+        userStakedNFTs[_msgSender()][collectionId].push(tokenId);
         userStakedNFTsCount[_msgSender()]++;
     }
 
     function unstake(uint256 tokenId, uint256 collectionId) external {
         require(stakedNFTs[collectionId][tokenId], "This token isn't staked!");
         require(_msgSender() == stakedNFTsInfo[collectionId][tokenId].stakerAddress, "Only staker can unstake tokens!");
-        require(stakedNFTsInfo[collectionId][tokenId].endTime < block.timestamp, 
+        require(stakedNFTsInfo[collectionId][tokenId].endTime > block.timestamp, 
         "You cannot unstake token after staking endtime!");
 
+        nftCollections[collectionId].transferFrom(address(this), 
+        stakedNFTsInfo[collectionId][tokenId].stakerAddress, tokenId);
         stakedNFTs[collectionId][tokenId] = false;
         _transfer(_msgSender(), address(this), stakedNFTsInfo[collectionId][tokenId].mintedTokenId);
         uint256[] storage refUserStakedNFTs = userStakedNFTs[_msgSender()][collectionId];
@@ -81,12 +84,15 @@ contract NFTStakingContract is ERC721Upgradeable {
     }
 
     function claimNewNFT(uint256 tokenId, uint256 collectionId) external {
-        require(nftCollections[collectionId].ownerOf(tokenId) == _msgSender(), "You're not an owner of this token!");
         require(stakedNFTs[collectionId][tokenId], "This token isn't staked!");
-        require(stakedNFTsInfo[collectionId][tokenId].endTime >= block.timestamp, 
-        "Token staking period hasn't passed!");
+        require(_msgSender() == stakedNFTsInfo[collectionId][tokenId].stakerAddress,
+        "Only staker can claim new tokens!");
+        require(stakedNFTsInfo[collectionId][tokenId].endTime <= block.timestamp, 
+        "Token staking period not passed!");
         require(!stakedNFTsInfo[collectionId][tokenId].claimed, "You already claimed an NFT from this token!");
 
+        nftCollections[collectionId].transferFrom(address(this), 
+        stakedNFTsInfo[collectionId][tokenId].stakerAddress, tokenId);
         mint(stakedNFTsInfo[collectionId][tokenId].stakerAddress);
         stakedNFTsInfo[collectionId][tokenId].claimed = true;
     }
