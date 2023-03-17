@@ -98,7 +98,7 @@ contract NFTStakingContract is ERC721Upgradeable {
     }
 
     function getUserStakedTokens(address user) external view returns (uint256[][] memory) {
-        uint256[][] memory userStakedTokens;
+        uint256[][] memory userStakedTokens = new uint256[][](nftCollections.length);
         for(uint256 i = 0; i < nftCollections.length; i++) {
             userStakedTokens[i] = userStakedNFTs[user][i];
         }
