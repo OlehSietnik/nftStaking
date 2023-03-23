@@ -12,7 +12,6 @@ describe("NFTStakingContract", function () {
     const NUM_NFTS = 2;
     const STAKING_PERIOD = 30 * 24 * 3600;
     let snapshotA: SnapshotRestorer;
-    let NFT, NFTStakingContract;
 
     // Signers.
     let deployer: SignerWithAddress, owner: SignerWithAddress, user: SignerWithAddress;
@@ -24,13 +23,13 @@ describe("NFTStakingContract", function () {
         // Getting of signers.
         [deployer, user] = await ethers.getSigners();
 
-        NFT = await ethers.getContractFactory("ERC721Mock", deployer);
-        NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
+        const NFT = await ethers.getContractFactory("ERC721Mock", deployer);
+        const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
         for(let i = 0; i < NUM_NFTS; i++) {
             nfts.push(await NFT.deploy("ERC721Token", "ERCT"));
             await nfts[i].deployed();
         }
-        nftStakingContract = await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
+        nftStakingContract = <NFTStakingContract> await upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC",
         nfts.map((x) => { return x.address })]);
 
         owner = deployer;
@@ -42,6 +41,7 @@ describe("NFTStakingContract", function () {
 
     describe("# Deployment", function () {
         it("Cannot deploy without NFT collections", async () => {
+            const NFTStakingContract = await ethers.getContractFactory("NFTStakingContract", deployer);
             await expect(upgrades.deployProxy(NFTStakingContract, ["NFTStaking", "NSC", []]
             )).to.be.revertedWith("Number of NFT collections must be greater than 0!");
         });
