@@ -1,13 +1,11 @@
-# Solidity TS Hardhat project template
+# NFT staking contract example
 
-This is sceleton for using in production, including development, audit and testing of contracts on Solidity with Hardhat, Ethers and TypeScript.
+This is an example of a contract used for staking NFT's.
 
-Note 1. This project template is ready for use, only README.md files are not ready, they are in the process. In the future, this template can be improved and supplemented.
+A user can stake his tokens from external NFT collections and get in exchange new token from this contract and then get another new token after expiration of staking period.
 
-Note 2. In GitHub it can be reused by clicking the "Use this template" button at the top of the page.
+Call `stake` function with token ID and collection from what you want to stake token for staking token. Maxiumun number of tokens user can stake is 10. Staking period will expire in 30 days.
 
-The MIT license is used, if otherwise, replace the `LICENSE` file and the "license" field in the `package.json` file according to your needs.
+If you want to unstake that token, call `unstake` functions with same parameters. You can stake that token again any time but with restarted staking period.
 
-The project name, description and author can be set in the `package.json` file.
-
-Note 3. There are a lot of comments in the files `.env.example` and `hardhat.config.ts`.
+After expiration of staking period you can claim new token by calling the `claimNewNFT` function with parameters mentioned above.
